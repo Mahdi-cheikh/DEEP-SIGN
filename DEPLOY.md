@@ -1,134 +1,121 @@
-# Deploying DEEP-SIGN to Render
+# Deploying DEEP-SIGN to Vercel + Supabase
 
-Render hosts both the FastAPI backend and the React frontend on the same account. This guide walks through every step.
-
-> Estimated time: 10–15 minutes. No credit card required for the free plan.
+10 minutes, two free accounts, zero credit cards.
 
 ---
 
 ## 0. Prerequisites
 
-- A free Render account: <https://render.com>
-- Git installed on your machine
-- Your GitHub repo: <https://github.com/Mahdi-cheikh/DEEP-SIGN>
+- A GitHub account (you already have one).
+- A free Supabase account: https://supabase.com
+- A free Vercel account: https://vercel.com — sign up with GitHub for the easiest flow.
 
 ---
 
-## 1. Push the project to GitHub
+## 1. Create the Supabase project
 
-The repo currently only contains a README. Replace it with the full project:
+1. Go to https://supabase.com/dashboard and click **New project**.
+2. Pick:
+   - **Name**: anything (e.g. `deep-sign`)
+   - **Database password**: let Supabase generate one (you don't need to remember it for this app)
+   - **Region**: closest to your users
+   - **Plan**: Free
+3. Click **Create new project**. Wait ~1 minute for provisioning.
 
-```bash
-cd C:\Users\mehed\Desktop\DEEP-SIGN
+## 2. Run the schema migration
 
-git init
-git branch -M main
-git remote add origin https://github.com/Mahdi-cheikh/DEEP-SIGN.git
+1. Open the **SQL Editor** in the left sidebar.
+2. Click **+ New query**.
+3. Open `supabase/migrations/0001_init.sql` from this repo, copy its contents, paste them into the editor, and click **Run** (or Ctrl/Cmd + Enter).
+4. You should see "Success. No rows returned." — that's a clean apply.
 
-# Fetch the existing remote so we can overwrite it cleanly
-git fetch origin
-git add .
-git commit -m "feat: full-stack rewrite with FastAPI backend + React frontend"
+This creates the `detections` table and the three Row-Level Security policies that ensure users can only see/insert/delete their own rows.
 
-# Force-push because we are replacing the remote's history
-git push -u origin main --force
-```
+## 3. (Optional) Disable email confirmation for fast testing
 
-> If your default GitHub auth is HTTPS, you'll be prompted for a Personal Access Token (PAT). Create one at <https://github.com/settings/tokens> with `repo` scope.
+By default, Supabase sends a confirmation email on signup. For local testing it's annoying. To skip it:
 
----
+1. **Authentication** → **Providers** → **Email**
+2. Toggle **Confirm email** off → **Save**
 
-## 2. Create the Render Blueprint
+You can re-enable this later for production.
 
-A `render.yaml` blueprint at the repo root provisions everything in one shot.
+## 4. Copy the project URL + anon key
 
-1. Log in to <https://dashboard.render.com>.
-2. Click **New +** → **Blueprint**.
-3. Connect your GitHub account if you haven't already, then pick **Mahdi-cheikh/DEEP-SIGN**.
-4. Render reads `render.yaml` and shows two services:
-   - `deep-sign-api`   – backend (FastAPI + MediaPipe)
-   - `deep-sign-web`   – frontend (React, served by nginx)
-5. Click **Apply**.
+1. **Project Settings** (gear icon, bottom-left) → **API**
+2. Copy:
+   - **Project URL** — looks like `https://abcdefghij.supabase.co`
+   - **Project API keys → anon public** — a long `eyJ...` JWT
 
-Render now builds both Docker images. The backend build takes 4–6 minutes the first time (MediaPipe is a large dependency). The frontend takes 1–2 minutes.
+Keep this page open; you'll paste these into Vercel in a moment.
 
----
+## 5. Deploy the frontend on Vercel
 
-## 3. Wire up the URLs
+1. Go to https://vercel.com/new
+2. Click **Import** next to **Mahdi-cheikh/DEEP-SIGN**. (If it's not in the list, click **Adjust GitHub App Permissions** and grant Vercel access to the repo.)
+3. On the **Configure Project** screen:
+   - **Framework Preset**: Vite (auto-detected)
+   - **Root Directory**: click **Edit** and set this to `frontend`
+   - **Build Command** / **Output Directory** / **Install Command** are picked up from `vercel.json` — leave them.
+4. Expand **Environment Variables** and add both:
 
-After the first build, Render assigns each service a public URL such as:
+   | Name                       | Value                                           |
+   | -------------------------- | ----------------------------------------------- |
+   | `VITE_SUPABASE_URL`        | (the Project URL from step 4)                   |
+   | `VITE_SUPABASE_ANON_KEY`   | (the anon public key from step 4)               |
 
-- Backend:  `https://deep-sign-api.onrender.com`
-- Frontend: `https://deep-sign-web.onrender.com`
+5. Click **Deploy**. Vercel builds the app (~1 minute) and gives you a URL like `https://deep-sign-mahdi-cheikh.vercel.app`.
 
-If your URLs differ from the placeholders in `render.yaml`, update the env vars:
+## 6. Tell Supabase about your Vercel URL
 
-1. Open **deep-sign-api** → **Environment** → set `CORS_ORIGINS` to your frontend URL.
-2. Open **deep-sign-web** → **Environment** → set `BACKEND_URL` to your backend URL.
-3. Each service will automatically redeploy when you save.
+Supabase needs to know where signup confirmation emails should redirect to.
 
----
+1. Back in Supabase: **Authentication** → **URL Configuration**.
+2. **Site URL**: paste your Vercel URL (e.g. `https://deep-sign-mahdi-cheikh.vercel.app`).
+3. **Redirect URLs**: add the same URL + `/**` (e.g. `https://deep-sign-mahdi-cheikh.vercel.app/**`).
+4. **Save**.
 
-## 4. Test it
+## 7. Try it!
 
-Open the frontend URL, sign up for an account, and click **Start** on the detect page. The browser will ask for webcam permission, and within a second you should see hand-landmark dots appear on the video and the detected sign on the right.
+Open your Vercel URL, click **Get started**, create an account, then go to **Detect** → **Start**. Allow webcam access. The first time the page loads the MediaPipe WASM bundle (~3 MB), then you'll see hand-landmark dots appear over the video and the detected sign on the right.
 
-Try these gestures to verify the classifier:
+Try:
 
 | Gesture                              | Expected label |
 | ------------------------------------ | -------------- |
 | Open palm, all fingers extended      | `HELLO`        |
 | Index + middle finger up, V shape    | `PEACE / V`    |
-| Thumb + pinky out, other folded      | `CALL / Y`     |
-| Thumb + index forming an O           | `OK`           |
+| Thumb + pinky out, others folded     | `CALL / Y`     |
+| Thumb tip touching index tip         | `OK`           |
 | Closed fist                          | `FIST / A`     |
 
----
-
-## 5. Going to production for real
-
-When you're ready to harden the deployment:
-
-- **Upgrade the backend plan** from Free → Starter ($7/mo). The free tier sleeps after 15 minutes of inactivity, which causes a slow cold start on the first request.
-- **Use Postgres** instead of SQLite. In Render: **New +** → **PostgreSQL** → copy the connection string into the backend's `DATABASE_URL` env var (it will look like `postgresql://...`). Then add `psycopg[binary]` to `backend/requirements.txt`.
-- **Add a custom domain** in the **deep-sign-web** service settings, then update `CORS_ORIGINS` on the backend to include the new domain.
-- **Rotate `SECRET_KEY`** — Render generates a strong one on first deploy; only rotate it if it leaks.
-- **Set up logs/alerts**: enable Render's log streaming to your preferred destination, or wire up Sentry by adding `sentry-sdk[fastapi]` to requirements and initialising it in `app/main.py`.
+Held for ~0.5 seconds, each will appear in your **History** page.
 
 ---
 
-## Local development still works
+## Custom domain
 
-Nothing in this deployment changes the local workflow:
+In Vercel: **Project → Settings → Domains** → add your domain. Vercel handles SSL automatically. Then return to step 6 and add the new origin to Supabase's allowed URLs.
 
-```bash
-# Backend
-cd backend && python -m venv .venv && source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+## Future deploys
 
-# Frontend (in another terminal)
-cd frontend && npm install && npm run dev
-```
-
-Or, with Docker:
-
-```bash
-docker compose up --build
-```
+Vercel auto-deploys on every push to `main`. Just `git push` and the next visit pulls the new build.
 
 ---
 
 ## Troubleshooting
 
-**Build fails with `mediapipe` install error.**
-MediaPipe ships pre-built wheels only for Python 3.10–3.12. The provided `Dockerfile` already uses `python:3.11-slim`, so this shouldn't happen on Render. If you customise the image, stick to those Python versions.
+**Signup says "Email rate limit exceeded".**
+Free Supabase plans cap auth emails at ~3/hour. Either wait, or disable email confirmation (step 3) for testing.
 
-**WebSocket never connects (`Live` badge stays grey).**
-Check the browser console — most likely the frontend can't reach `BACKEND_URL`. Verify the env var in the **deep-sign-web** service. Render serves both HTTP and WSS on the same domain, so no extra config is required.
+**"Missing Supabase env vars" warning in console.**
+The Vercel env vars didn't apply. Check Project → Settings → Environment Variables, ensure both `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` exist for the Production environment, then **Redeploy** from the Deployments tab.
 
-**`401 Unauthorized` after a deploy.**
-The JWT secret changed (e.g. you rotated `SECRET_KEY`). Sign out in the browser and sign back in to get a fresh token.
+**Webcam stays black on production but works locally.**
+The site must be served over HTTPS for `getUserMedia` to work. Vercel always serves HTTPS, so this normally means the user denied permission — check the camera icon in the browser address bar.
 
-**Cold starts.**
-On the free plan, the backend sleeps after 15 min idle and takes ~30 s to wake. Upgrade to Starter for always-on.
+**MediaPipe model fails to load.**
+The model is fetched from `storage.googleapis.com`. If you're behind a network that blocks that domain, the model file won't load. Mirror the `.task` file somewhere you can reach and update `MODEL_URL` in `frontend/src/components/WebcamDetector.jsx`.
+
+**History page is empty even though detections work.**
+Confirm the SQL migration ran (step 2). In Supabase: **Table Editor** → look for the `detections` table. If it's missing, paste `0001_init.sql` into SQL Editor and click Run.

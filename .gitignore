@@ -15,6 +15,11 @@ dist/
 .npm/
 .pnp.*
 *.log
+.env.local
+.env.*.local
+
+# Vercel
+.vercel/
 
 # OS / editor
 .DS_Store

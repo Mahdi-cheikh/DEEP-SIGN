@@ -1,150 +1,101 @@
 # DEEP-SIGN
 
-Real-time sign-language detection in your browser. A production-style full-stack
-app built around MediaPipe Hands: the React front-end streams webcam frames to a
-FastAPI back-end over WebSocket, the back-end extracts hand landmarks, classifies
-them, and sends the result back. Confident detections are persisted to each user's
-account so they can review their session history.
+Real-time sign-language detection that runs entirely in your browser.
 
-> Replaces the original sketch (TensorFlow + SSD MobileNet training scripts) with
-> a clean, working, end-to-end implementation that requires **no training data**
-> to get started.
+A serverless full-stack app: React + Vite on the frontend, **MediaPipe Hands
+running client-side in WebAssembly** for inference, **Supabase** for auth and
+detection history. Deploys to **Vercel** in a single click.
+
+> Replaces the original sketch (TensorFlow + SSD MobileNet training scripts).
+> No model training, no Python backend, no servers — webcam frames never leave
+> your computer.
 
 ---
 
-## Features
-
-- **Real-time webcam detection** over a single authenticated WebSocket
-- **MediaPipe Hands** for 21-point hand landmark extraction (CPU, no GPU needed)
-- **Geometry-based classifier** recognising A, B, C, D, F, I, L, O, V, W, Y, plus
-  HELLO, THUMBS_UP, OK, FIST, PEACE, ROCK, CALL, POINT
-- **User accounts** with JWT auth (signup / login / me)
-- **Per-user history** with summary stats (top sign, totals, last seen)
-- **REST + WebSocket** APIs, OpenAPI docs at `/docs`
-- **SQLite** by default, swappable to Postgres via `DATABASE_URL`
-- **Dockerfile** for backend + frontend, plus a `docker-compose.yml` for one-command boot
-
-## Architecture
+## How it works
 
 ```
-┌──────────────┐  WebSocket frames  ┌────────────────────┐  MediaPipe Hands  ┌────────────────────────┐
-│  React UI    │ ─────────────────▶ │  FastAPI server    │ ───────────────▶ │  Geometric classifier  │
-│ (Vite + TW)  │ ◀───── JSON ────── │  + SQLite (auth/   │ ◀── label/conf── │  (21-landmark rules)   │
-└──────────────┘                    │   history)         │                  └────────────────────────┘
-                                    └────────────────────┘
+┌─────────────────────────────────────────────────────┐         ┌────────────────────┐
+│  Browser (React + Vite, deployed on Vercel)         │         │  Supabase          │
+│  ─────────────────────────────────────────────────  │  HTTPS  │  ────────────────  │
+│  • UI + routing                                     │ ──────▶ │  Auth (email/pw)   │
+│  • Webcam capture (getUserMedia)                    │         │  Postgres          │
+│  • @mediapipe/tasks-vision (WASM hand landmarker)   │         │   └─ detections    │
+│  • Rule-based classifier (geometry over landmarks)  │         │   Row-Level Sec.   │
+│  • Supabase JS client                               │         │                    │
+└─────────────────────────────────────────────────────┘         └────────────────────┘
 ```
 
-Folder layout:
+When you click **Start**, the browser:
+1. Asks for webcam access.
+2. Loads the MediaPipe Hand Landmarker WASM bundle (~3 MB, cached after first load).
+3. Runs the model on each video frame at ~30 fps.
+4. Feeds 21 hand landmarks through a deterministic geometry classifier
+   (`src/lib/classifier.js`) that recognises 13+ ASL letters/gestures.
+5. After ~0.5 s of a stable sign, inserts a row into Supabase via the JS client.
+6. Row-Level Security on the `detections` table makes sure users only see their own.
+
+Recognised signs: `HELLO`, `THUMBS_UP`, `OK`, `FIST`, `PEACE`, `ROCK`, `CALL`,
+`POINT`, plus letters `A`, `B`, `C`, `D`, `F`, `I`, `L`, `V`, `W`, `Y`.
+
+## Folder layout
 
 ```
 DEEP-SIGN/
-├── backend/                 FastAPI app
-│   ├── app/
-│   │   ├── main.py          ASGI entry point
-│   │   ├── config.py        env-driven settings
-│   │   ├── database.py      SQLAlchemy engine + session
-│   │   ├── models.py        ORM models (User, Detection)
-│   │   ├── schemas.py       Pydantic request/response models
-│   │   ├── security.py      JWT + password hashing
-│   │   ├── routers/
-│   │   │   ├── auth.py      signup / login / me
-│   │   │   ├── detect.py    POST /detect/image + WS /detect/ws
-│   │   │   └── history.py   list / stats / clear
-│   │   └── services/
-│   │       └── detector.py  MediaPipe Hands + rule-based classifier
-│   ├── requirements.txt
-│   ├── Dockerfile
-│   └── .env.example
-├── frontend/                React 18 SPA
+├── frontend/                React 18 SPA (deploys to Vercel)
 │   ├── src/
-│   │   ├── api/client.js          fetch + WS helpers
-│   │   ├── context/AuthContext.jsx  token persistence + me()
+│   │   ├── lib/
+│   │   │   ├── supabase.js     Supabase JS client
+│   │   │   └── classifier.js   Geometry-based sign classifier
+│   │   ├── context/AuthContext.jsx   Supabase auth wrapper
 │   │   ├── components/
 │   │   │   ├── Navbar.jsx
 │   │   │   ├── ProtectedRoute.jsx
-│   │   │   └── WebcamDetector.jsx   ⭐ the centerpiece
+│   │   │   └── WebcamDetector.jsx    MediaPipe + classifier glue
 │   │   └── pages/
-│   │       ├── Landing.jsx
-│   │       ├── Login.jsx · Signup.jsx
-│   │       ├── Detect.jsx
-│   │       └── History.jsx
-│   ├── tailwind.config.js · vite.config.js · index.html
-│   ├── Dockerfile · nginx.conf
-│   └── package.json
-└── docker-compose.yml
+│   │       ├── Landing.jsx · Login.jsx · Signup.jsx
+│   │       └── Detect.jsx · History.jsx
+│   ├── tailwind.config.js · vite.config.js · vercel.json
+│   ├── package.json · .env.example
+└── supabase/
+    └── migrations/
+        └── 0001_init.sql        detections table + RLS policies
 ```
 
-## Quick start (local dev)
+## Quick start (local)
 
-You need Python 3.10+ and Node 18+.
+You need Node 18+ and a free Supabase project.
 
-### 1. Backend
+1. **Create your Supabase project** at https://supabase.com → **New project**.
+2. **Run the migration**: open the SQL Editor and paste in `supabase/migrations/0001_init.sql`, then click **Run**.
+3. **Disable email confirmation (optional, for quick testing)**: Authentication → Providers → Email → toggle **Confirm email** off.
+4. **Grab your keys**: Project Settings → API. Copy the **Project URL** and the **anon public** key.
+5. **Configure the frontend**:
+   ```bash
+   cd frontend
+   cp .env.example .env.local
+   # edit .env.local — paste your URL + anon key
+   npm install
+   npm run dev
+   ```
+6. Open http://localhost:5173, sign up, then go to **Detect**.
 
-```bash
-cd backend
-python -m venv .venv
-# Windows:        .venv\Scripts\activate
-# macOS / Linux:  source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env       # then edit SECRET_KEY etc.
-uvicorn app.main:app --reload
-```
+> First time you open the detect page, the browser pulls the ~3 MB MediaPipe WASM
+> bundle. Subsequent visits are instant.
 
-The API now lives at `http://localhost:8000` — open `/docs` for Swagger UI.
+## Deploying
 
-### 2. Frontend
+See [`DEPLOY.md`](./DEPLOY.md) for the full Vercel + Supabase walkthrough.
 
-In a second terminal:
+## Why this architecture?
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Open `http://localhost:5173`. Vite proxies `/api` and `/ws-api` to the backend,
-so there's no CORS dance during development.
-
-## Quick start (Docker)
-
-```bash
-docker compose up --build
-# Frontend:  http://localhost:5173
-# Backend:   http://localhost:8000
-```
-
-## API at a glance
-
-| Method | Path                      | Auth | Description                                    |
-| ------ | ------------------------- | ---- | ---------------------------------------------- |
-| POST   | `/api/auth/signup`        | —    | Create account, returns JWT                    |
-| POST   | `/api/auth/login`         | —    | OAuth2-style login (`username` = email)        |
-| GET    | `/api/auth/me`            | ✅    | Current user                                   |
-| POST   | `/api/detect/image`       | ✅    | Single image → `{sign, confidence, …}`         |
-| WS     | `/api/detect/ws?token=…`  | ✅    | Stream JPEG data-URL frames, get JSON results  |
-| GET    | `/api/history/`           | ✅    | Recent detections (limit, offset)              |
-| GET    | `/api/history/stats`      | ✅    | Totals & top sign                              |
-| DELETE | `/api/history/`           | ✅    | Wipe this user's history                       |
-
-## How the detector works
-
-`backend/app/services/detector.py` runs MediaPipe Hands on each frame, then
-checks which fingers are extended (per-finger tip-vs-PIP distance from the wrist,
-with a special-case horizontal check for the thumb). The resulting 5-bit pattern
-maps onto a curated table of common signs. A pinch test (thumb-tip to index-tip
-distance, normalised by hand size) detects **OK** and **C**.
-
-This deterministic approach works zero-shot and runs in real time on CPU. To
-upgrade to a trained model, replace `_classify()` with calls to your own
-classifier — feed it the flattened 42-D landmark vector and you're done.
-
-## Production notes
-
-- Set a strong `SECRET_KEY` and store it as a deployment secret.
-- Lock `CORS_ORIGINS` to your actual frontend origin.
-- Swap SQLite for Postgres in production (`DATABASE_URL=postgresql+psycopg://…`).
-- Put the WebSocket behind a TLS-terminating proxy (nginx, Caddy, Cloudflare).
-- Rate-limit `/auth/login` and `/detect/image` (e.g. with slowapi or a reverse-proxy).
+| Concern        | Before (FastAPI + Render)          | Now (Supabase + Vercel)              |
+| -------------- | ---------------------------------- | ------------------------------------ |
+| Inference      | Server-side MediaPipe + WebSocket  | Client-side WASM, no network round-trip |
+| Cost           | Render free tier sleeps after 15 m | Vercel + Supabase free, no cold start |
+| Privacy        | Frames streamed to server          | Frames never leave the browser       |
+| Cold start     | ~30 s when waking                  | None                                 |
+| Ops surface    | Docker, env vars, CORS, disks      | One env file, one SQL migration      |
 
 ## License
 

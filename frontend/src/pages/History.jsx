@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import { supabase } from '../lib/supabase.js';
 
 function formatDate(iso) {
   try {
@@ -9,25 +10,50 @@ function formatDate(iso) {
   }
 }
 
+function computeStats(rows) {
+  if (!rows.length) return { total: 0, unique_signs: 0, top_sign: null, last_seen_at: null };
+  const counts = new Map();
+  for (const r of rows) counts.set(r.sign, (counts.get(r.sign) || 0) + 1);
+  let top = null;
+  let topCount = 0;
+  for (const [sign, c] of counts) {
+    if (c > topCount) {
+      topCount = c;
+      top = sign;
+    }
+  }
+  return {
+    total: rows.length,
+    unique_signs: counts.size,
+    top_sign: top,
+    last_seen_at: rows[0].created_at,
+  };
+}
+
 export default function History() {
+  const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const refresh = useCallback(async () => {
+    if (!user) return;
     setLoading(true);
     setError(null);
-    try {
-      const [items, s] = await Promise.all([api.history(100), api.stats()]);
-      setRows(items);
-      setStats(s);
-    } catch (e) {
-      setError(e.message || 'Failed to load');
-    } finally {
-      setLoading(false);
+    const { data, error: err } = await supabase
+      .from('detections')
+      .select('id, sign, confidence, created_at')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (err) {
+      setError(err.message);
+    } else {
+      setRows(data || []);
+      setStats(computeStats(data || []));
     }
-  }, []);
+    setLoading(false);
+  }, [user]);
 
   useEffect(() => {
     refresh();
@@ -35,7 +61,11 @@ export default function History() {
 
   const onClear = async () => {
     if (!confirm('Clear all detection history? This cannot be undone.')) return;
-    await api.clearHistory();
+    const { error: err } = await supabase.from('detections').delete().gte('id', 0);
+    if (err) {
+      alert('Failed to clear history: ' + err.message);
+      return;
+    }
     await refresh();
   };
 
@@ -56,7 +86,11 @@ export default function History() {
         <Stat label="Total detections" value={stats?.total ?? '—'} />
         <Stat label="Unique signs" value={stats?.unique_signs ?? '—'} />
         <Stat label="Top sign" value={stats?.top_sign ?? '—'} />
-        <Stat label="Last seen" value={stats?.last_seen_at ? formatDate(stats.last_seen_at) : '—'} small />
+        <Stat
+          label="Last seen"
+          value={stats?.last_seen_at ? formatDate(stats.last_seen_at) : '—'}
+          small
+        />
       </div>
 
       <div className="card !p-0 overflow-hidden">
@@ -70,10 +104,14 @@ export default function History() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {loading && (
-              <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-500">Loading…</td></tr>
+              <tr>
+                <td colSpan={3} className="px-4 py-8 text-center text-slate-500">Loading…</td>
+              </tr>
             )}
             {!loading && error && (
-              <tr><td colSpan={3} className="px-4 py-8 text-center text-red-600">{error}</td></tr>
+              <tr>
+                <td colSpan={3} className="px-4 py-8 text-center text-red-600">{error}</td>
+              </tr>
             )}
             {!loading && !error && rows.length === 0 && (
               <tr>
@@ -90,10 +128,12 @@ export default function History() {
                     <div className="w-24 h-1.5 rounded-full bg-slate-100 overflow-hidden">
                       <div
                         className="h-full bg-brand-500"
-                        style={{ width: `${Math.round(r.confidence * 100)}%` }}
+                        style={{ width: `${Math.round(Number(r.confidence) * 100)}%` }}
                       />
                     </div>
-                    <span className="text-xs text-slate-500">{Math.round(r.confidence * 100)}%</span>
+                    <span className="text-xs text-slate-500">
+                      {Math.round(Number(r.confidence) * 100)}%
+                    </span>
                   </div>
                 </td>
                 <td className="px-4 py-3 text-slate-600">{formatDate(r.created_at)}</td>
@@ -110,7 +150,9 @@ function Stat({ label, value, small }) {
   return (
     <div className="card !p-4">
       <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={`mt-1 font-bold text-slate-900 ${small ? 'text-base' : 'text-2xl'}`}>{value}</div>
+      <div className={`mt-1 font-bold text-slate-900 ${small ? 'text-base' : 'text-2xl'}`}>
+        {value}
+      </div>
     </div>
   );
 }

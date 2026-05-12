@@ -5,17 +5,5 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-      },
-      '/ws-api': {
-        target: 'ws://localhost:8000',
-        ws: true,
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/ws-api/, '/api'),
-      },
-    },
   },
 });

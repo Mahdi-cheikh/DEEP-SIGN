@@ -1,38 +1,79 @@
+import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../api/client.js';
-import { useAuth } from '../context/AuthContext.jsx';
 
-const TARGET_FPS = 8; // throttle frames sent over the socket
-const JPEG_QUALITY = 0.6;
+import { useAuth } from '../context/AuthContext.jsx';
+import { classifyFrame } from '../lib/classifier.js';
+import { supabase } from '../lib/supabase.js';
+
+// MediaPipe runs entirely client-side. We pull the WASM bundle and model file
+// from Google's CDN — both are cached aggressively by the browser after first
+// load (~3 MB total).
+const WASM_BASE =
+  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+const MODEL_URL =
+  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+
 const FRAME_W = 480;
 const FRAME_H = 360;
 
+// Require N consecutive frames of the same sign before we log it. This is
+// the same debounce the Python WebSocket handler used (~0.5 s @ 30 fps).
+const PERSIST_THRESHOLD = 12;
+
+let landmarkerSingleton = null;
+async function getLandmarker() {
+  if (landmarkerSingleton) return landmarkerSingleton;
+  const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
+  landmarkerSingleton = await HandLandmarker.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+    runningMode: 'VIDEO',
+    numHands: 2,
+    minHandDetectionConfidence: 0.6,
+    minHandPresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  });
+  return landmarkerSingleton;
+}
+
+async function logDetection(userId, sign, confidence) {
+  if (!userId || ['UNKNOWN', 'NO_HAND', 'NO_INPUT', '—'].includes(sign)) return;
+  const { error } = await supabase
+    .from('detections')
+    .insert({ user_id: userId, sign, confidence: Number(confidence.toFixed(3)) });
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.warn('Failed to log detection', error);
+  }
+}
+
 export default function WebcamDetector() {
-  const { token } = useAuth();
+  const { user } = useAuth();
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);     // hidden encoder canvas
-  const overlayRef = useRef(null);    // visible overlay
+  const overlayRef = useRef(null);
   const streamRef = useRef(null);
-  const wsRef = useRef(null);
-  const sendingRef = useRef(false);
-  const intervalRef = useRef(null);
+  const rafRef = useRef(null);
+  const lastSignRef = useRef(null);
+  const streakRef = useRef(0);
 
   const [streaming, setStreaming] = useState(false);
-  const [connected, setConnected] = useState(false);
+  const [modelStatus, setModelStatus] = useState('idle');
   const [error, setError] = useState(null);
   const [result, setResult] = useState({
     sign: '—',
     confidence: 0,
-    hands_detected: 0,
-    annotations: [],
+    handsDetected: 0,
+    landmarks: [],
   });
 
-  // ---------- camera ----------
   const startCamera = useCallback(async () => {
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: FRAME_W }, height: { ideal: FRAME_H }, facingMode: 'user' },
+        video: {
+          width: { ideal: FRAME_W },
+          height: { ideal: FRAME_H },
+          facingMode: 'user',
+        },
         audio: false,
       });
       streamRef.current = stream;
@@ -52,63 +93,43 @@ export default function WebcamDetector() {
     setStreaming(false);
   }, []);
 
-  // ---------- socket ----------
-  const openSocket = useCallback(() => {
-    if (!token) return;
-    const ws = new WebSocket(api.wsUrl(token));
-    wsRef.current = ws;
+  const loop = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2) {
+      rafRef.current = requestAnimationFrame(loop);
+      return;
+    }
 
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onerror = () => setError('WebSocket error');
+    const landmarker = await getLandmarker();
+    const out = landmarker.detectForVideo(video, performance.now());
 
-    ws.onmessage = (ev) => {
-      try {
-        const data = JSON.parse(ev.data);
-        if (data.error) return;
-        setResult(data);
-        sendingRef.current = false;
-      } catch (_) {
-        sendingRef.current = false;
-      }
-    };
-  }, [token]);
+    const hands = (out.landmarks || []).map((lms, i) => ({
+      landmarks: lms,
+      handedness: out.handedness?.[i]?.[0]?.categoryName ?? 'Right',
+    }));
 
-  const closeSocket = useCallback(() => {
-    wsRef.current?.close();
-    wsRef.current = null;
-    setConnected(false);
-  }, []);
+    const classified = classifyFrame(hands);
 
-  // ---------- frame loop ----------
-  useEffect(() => {
-    if (!streaming || !connected) return;
-    intervalRef.current = setInterval(() => {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const ws = wsRef.current;
-      if (!video || !canvas || !ws || ws.readyState !== WebSocket.OPEN) return;
-      if (sendingRef.current) return; // wait for previous reply
+    setResult({
+      sign: classified.sign,
+      confidence: classified.confidence,
+      handsDetected: classified.handsDetected,
+      landmarks: out.landmarks?.flat() ?? [],
+    });
 
-      canvas.width = FRAME_W;
-      canvas.height = FRAME_H;
-      const ctx = canvas.getContext('2d');
-      // Mirror to match the on-screen preview.
-      ctx.save();
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      ctx.restore();
-      const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+    if (classified.sign === lastSignRef.current) {
+      streakRef.current += 1;
+    } else {
+      lastSignRef.current = classified.sign;
+      streakRef.current = 1;
+    }
+    if (streakRef.current === PERSIST_THRESHOLD) {
+      logDetection(user?.id, classified.sign, classified.confidence);
+    }
 
-      sendingRef.current = true;
-      ws.send(dataUrl);
-    }, Math.round(1000 / TARGET_FPS));
+    rafRef.current = requestAnimationFrame(loop);
+  }, [user?.id]);
 
-    return () => clearInterval(intervalRef.current);
-  }, [streaming, connected]);
-
-  // ---------- overlay painting ----------
   useEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
@@ -116,42 +137,46 @@ export default function WebcamDetector() {
     overlay.width = FRAME_W;
     overlay.height = FRAME_H;
     ctx.clearRect(0, 0, overlay.width, overlay.height);
-    if (!result.annotations?.length) return;
+    if (!result.landmarks?.length) return;
 
     ctx.fillStyle = '#22d3ee';
-    ctx.strokeStyle = '#0ea5e9';
-    ctx.lineWidth = 2;
-    for (const [nx, ny] of result.annotations) {
-      const x = nx * overlay.width;
-      const y = ny * overlay.height;
+    for (const p of result.landmarks) {
+      const x = (1 - p.x) * overlay.width;
+      const y = p.y * overlay.height;
       ctx.beginPath();
       ctx.arc(x, y, 3.5, 0, Math.PI * 2);
       ctx.fill();
     }
   }, [result]);
 
-  // ---------- cleanup ----------
   useEffect(() => {
     return () => {
-      clearInterval(intervalRef.current);
-      closeSocket();
+      cancelAnimationFrame(rafRef.current);
       stopCamera();
     };
-  }, [closeSocket, stopCamera]);
+  }, [stopCamera]);
 
-  // ---------- handlers ----------
   const start = async () => {
+    setModelStatus('loading');
+    try {
+      await getLandmarker();
+      setModelStatus('ready');
+    } catch (e) {
+      setModelStatus('error');
+      setError('Failed to load detection model: ' + e.message);
+      return;
+    }
     await startCamera();
-    openSocket();
+    lastSignRef.current = null;
+    streakRef.current = 0;
+    rafRef.current = requestAnimationFrame(loop);
   };
   const stop = () => {
-    clearInterval(intervalRef.current);
-    closeSocket();
+    cancelAnimationFrame(rafRef.current);
     stopCamera();
-    setResult({ sign: '—', confidence: 0, hands_detected: 0, annotations: [] });
+    setResult({ sign: '—', confidence: 0, handsDetected: 0, landmarks: [] });
   };
 
-  // ---------- render ----------
   const conf = Math.round((result.confidence || 0) * 100);
   const isReal =
     result.sign && !['—', 'UNKNOWN', 'NO_HAND', 'NO_INPUT'].includes(result.sign);
@@ -160,41 +185,40 @@ export default function WebcamDetector() {
     <div className="grid lg:grid-cols-3 gap-6">
       <div className="lg:col-span-2 card !p-0 overflow-hidden">
         <div className="relative bg-slate-900 aspect-[4/3]">
-          {/* Preview video (mirrored for natural feel) */}
           <video
             ref={videoRef}
             playsInline
             muted
             className="absolute inset-0 w-full h-full object-cover -scale-x-100"
           />
-          {/* Landmark overlay — already drawn in mirrored coordinates */}
           <canvas
             ref={overlayRef}
             className="absolute inset-0 w-full h-full pointer-events-none"
           />
-          <canvas ref={canvasRef} className="hidden" />
-
           {!streaming && (
             <div className="absolute inset-0 grid place-items-center text-white text-center px-6">
               <div>
                 <div className="text-2xl font-semibold mb-2">Camera off</div>
                 <p className="text-slate-300 max-w-md mx-auto">
                   Allow webcam access and click <strong>Start</strong> to begin real-time
-                  sign-language detection.
+                  sign-language detection. Everything runs in your browser — no frames are
+                  sent over the network.
                 </p>
               </div>
             </div>
           )}
-
           <div className="absolute top-3 left-3 flex gap-2">
-            <span className={`badge ${connected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${connected ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-              {connected ? 'Live' : 'Offline'}
+            <span className={`badge ${streaming ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${streaming ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+              {streaming ? 'Live' : 'Offline'}
             </span>
             {streaming && (
               <span className="badge bg-white/80 text-slate-700">
-                {result.hands_detected} hand{result.hands_detected === 1 ? '' : 's'}
+                {result.handsDetected} hand{result.handsDetected === 1 ? '' : 's'}
               </span>
+            )}
+            {modelStatus === 'loading' && (
+              <span className="badge bg-amber-100 text-amber-700">Loading model…</span>
             )}
           </div>
         </div>
@@ -202,14 +226,16 @@ export default function WebcamDetector() {
         <div className="flex items-center justify-between p-4 border-t border-slate-100">
           {!streaming ? (
             <button onClick={start} className="btn-primary">
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="5 3 19 12 5 21 5 3" fill="currentColor" />
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3" />
               </svg>
               Start
             </button>
           ) : (
             <button onClick={stop} className="btn-danger">
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5" /></svg>
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="1.5" />
+              </svg>
               Stop
             </button>
           )}
@@ -242,7 +268,7 @@ export default function WebcamDetector() {
           <ul className="list-disc list-inside space-y-1">
             <li>Make sure your hand is well lit.</li>
             <li>Frame your whole hand inside the preview.</li>
-            <li>Hold a sign steady for ~1 second to log it to history.</li>
+            <li>Hold a sign steady for ~0.5 seconds to log it to history.</li>
           </ul>
         </div>
       </div>

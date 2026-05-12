@@ -9,6 +9,7 @@ export default function Signup() {
   const [form, setForm] = useState({ full_name: '', email: '', password: '' });
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState(null);
 
   const setField = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -17,14 +18,38 @@ export default function Signup() {
     setError(null);
     setLoading(true);
     try {
-      await signup(form);
-      navigate('/detect', { replace: true });
+      const data = await signup(form);
+      if (data.session) {
+        navigate('/detect', { replace: true });
+      } else {
+        setPendingEmail(form.email);
+      }
     } catch (err) {
       setError(err.message || 'Sign-up failed');
     } finally {
       setLoading(false);
     }
   };
+
+  if (pendingEmail) {
+    return (
+      <div className="max-w-md mx-auto px-4 py-12">
+        <div className="card text-center">
+          <div className="w-12 h-12 mx-auto rounded-full bg-brand-100 text-brand-700 grid place-items-center text-xl font-bold">
+            ✓
+          </div>
+          <h1 className="mt-4 text-2xl font-bold text-slate-900">Check your inbox</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            We sent a confirmation link to <strong>{pendingEmail}</strong>. Click it to
+            activate your account, then come back and sign in.
+          </p>
+          <Link to="/login" className="btn-primary w-full mt-6">
+            Go to sign in
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-md mx-auto px-4 py-12">
