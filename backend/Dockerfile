@@ -16,5 +16,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Render injects $PORT (typically 10000). Default to 8000 for local docker-compose.
+ENV PORT=8000
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Use the shell form of CMD so $PORT is expanded at runtime.
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}

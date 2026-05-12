@@ -2,16 +2,18 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import List
+from typing import Annotated, List
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Runtime configuration. Values come from environment or `.env`."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     project_name: str = "DEEP-SIGN"
     api_v1_prefix: str = "/api"
@@ -25,7 +27,11 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./deepsign.db"
 
     # --- CORS ---
-    cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    # `NoDecode` stops pydantic-settings from JSON-parsing the raw env string
+    # so our comma-splitting validator below gets to handle it.
+    cors_origins: Annotated[List[str], NoDecode] = Field(
+        default_factory=lambda: ["http://localhost:5173"]
+    )
 
     # --- Detector ---
     min_confidence: float = 0.55
