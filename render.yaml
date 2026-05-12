@@ -1,0 +1,45 @@
+# Render Blueprint for DEEP-SIGN
+# Push this repo to GitHub, then in Render: "New +" → "Blueprint" → pick this repo.
+# Render will provision both services and the persistent disk in one go.
+
+services:
+  # --- Backend: FastAPI + MediaPipe ---
+  - type: web
+    name: deep-sign-api
+    env: docker
+    plan: free                     # upgrade to "starter" for always-on, no cold start
+    region: oregon                 # change to your preferred region
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: deepsign-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true        # Render generates a strong random value
+      - key: DATABASE_URL
+        value: sqlite:////data/deepsign.db
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+      - key: MIN_CONFIDENCE
+        value: "0.55"
+      - key: CORS_ORIGINS
+        # Replace with your real frontend URL after the first deploy
+        value: https://deep-sign-web.onrender.com
+
+  # --- Frontend: React static site served by nginx ---
+  - type: web
+    name: deep-sign-web
+    env: docker
+    plan: free
+    region: oregon
+    rootDir: frontend
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    envVars:
+      # The backend URL the frontend should talk to. Read by nginx.conf.template at boot.
+      - key: BACKEND_URL
+        value: https://deep-sign-api.onrender.com
