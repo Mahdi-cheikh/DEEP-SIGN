@@ -1,14 +1,17 @@
 /**
- * Sign-language classifier — direct port of backend/app/services/detector.py.
+ * Sign-language classifier with two layers:
  *
- * Takes one hand's 21 MediaPipe landmarks (each {x, y, z} in normalized image
- * coordinates) plus the handedness label, and returns { label, confidence }.
+ *   1. MediaPipe GestureRecognizer's built-in 7 named gestures
+ *      (Open_Palm, Closed_Fist, Thumb_Up, Thumb_Down, Pointing_Up, Victory, ILoveYou)
+ *   2. Our deterministic geometry classifier as a fallback for letters/shapes
+ *      MediaPipe doesn't cover.
  *
- * The logic is deterministic geometry: which fingers are extended + a pinch
- * test for OK and C. No training data required.
+ * Both produce raw labels which we then map to friendly English words via
+ * WORD_MAP so the sentence builder gets natural output like "HELLO" instead
+ * of "Open_Palm".
  */
 
-// --- Landmark indices (per MediaPipe spec) ---
+// --- MediaPipe landmark indices (per official spec) ---
 export const LM = {
   WRIST: 0,
   THUMB_CMC: 1, THUMB_MCP: 2, THUMB_IP: 3, THUMB_TIP: 4,
@@ -26,15 +29,9 @@ function dist(a, b) {
 
 function fingerExtended(lms, tipIdx, pipIdx) {
   const wrist = lms[LM.WRIST];
-  const tipDist = dist(lms[tipIdx], wrist);
-  const pipDist = dist(lms[pipIdx], wrist);
-  return tipDist > pipDist * 1.05;
+  return dist(lms[tipIdx], wrist) > dist(lms[pipIdx], wrist) * 1.05;
 }
 
-/**
- * The thumb is mostly horizontal — we compare the tip vs MCP along x and
- * factor in handedness so the direction sign is correct on both hands.
- */
 function thumbExtended(lms, handedness) {
   const tip = lms[LM.THUMB_TIP];
   const mcp = lms[LM.THUMB_MCP];
@@ -56,32 +53,29 @@ function computeFingerState(lms, handedness) {
 }
 
 const TABLE = new Map([
-  // key = `${t}${i}${m}${r}${p}` of 0/1 flags
-  ['00000', { label: 'FIST / A',    confidence: 0.90 }],
-  ['10000', { label: 'THUMBS_UP / A', confidence: 0.88 }],
-  ['01111', { label: 'B',           confidence: 0.90 }],
-  ['11111', { label: 'HELLO',       confidence: 0.95 }],
-  ['01000', { label: 'POINT / D',   confidence: 0.85 }],
-  ['11000', { label: 'L',           confidence: 0.92 }],
-  ['01100', { label: 'PEACE / V',   confidence: 0.92 }],
-  ['01110', { label: 'W',           confidence: 0.88 }],
-  ['00001', { label: 'I',           confidence: 0.85 }],
-  ['11001', { label: 'ROCK',        confidence: 0.86 }],
-  ['10001', { label: 'CALL / Y',    confidence: 0.88 }],
-  ['00100', { label: 'MIDDLE',      confidence: 0.75 }],
-  ['00011', { label: 'F',           confidence: 0.70 }],
+  ['00000', { label: 'FIST',     confidence: 0.90 }],
+  ['10000', { label: 'THUMBS_UP', confidence: 0.88 }],
+  ['01111', { label: 'B',        confidence: 0.90 }],
+  ['11111', { label: 'OPEN_PALM', confidence: 0.95 }],
+  ['01000', { label: 'POINT',    confidence: 0.85 }],
+  ['11000', { label: 'L',        confidence: 0.92 }],
+  ['01100', { label: 'PEACE',    confidence: 0.92 }],
+  ['01110', { label: 'W',        confidence: 0.88 }],
+  ['00001', { label: 'I',        confidence: 0.85 }],
+  ['11001', { label: 'ROCK',     confidence: 0.86 }],
+  ['10001', { label: 'CALL',     confidence: 0.88 }],
+  ['00100', { label: 'MIDDLE',   confidence: 0.75 }],
+  ['00011', { label: 'F',        confidence: 0.70 }],
+  ['10111', { label: 'ILOVEYOU', confidence: 0.90 }],
 ]);
 
 /**
- * Classify a single hand. Returns { label, confidence } where confidence is in [0, 1].
- *
- * @param {Array<{x:number, y:number, z:number}>} lms - 21 landmarks
- * @param {'Left' | 'Right'} handedness
+ * Rule-based classifier — used when the built-in GestureRecognizer
+ * returns "None" or a low-confidence guess.
  */
 export function classifyHand(lms, handedness) {
   const s = computeFingerState(lms, handedness);
 
-  // Pinch test — thumb tip touches index tip = OK / C.
   const handSize = dist(lms[LM.WRIST], lms[LM.MIDDLE_MCP]) || 1e-6;
   const pinch = dist(lms[LM.THUMB_TIP], lms[LM.INDEX_TIP]) / handSize;
   if (pinch < 0.35 && s.middle && s.ring && s.pinky) {
@@ -96,17 +90,67 @@ export function classifyHand(lms, handedness) {
 }
 
 /**
- * Pick the best-confidence hand out of an array of (landmarks, handedness)
- * pairs and apply the global confidence threshold.
+ * Map raw model output (MediaPipe gesture name or our rule label) to a
+ * friendly English "word" suitable for the sentence builder.
+ */
+export const WORD_MAP = {
+  // MediaPipe GestureRecognizer built-ins
+  Open_Palm:     'HELLO',
+  Closed_Fist:   'STOP',
+  Thumb_Up:      'YES',
+  Thumb_Down:    'NO',
+  Pointing_Up:   'YOU',
+  Victory:       'PEACE',
+  ILoveYou:      'I_LOVE_YOU',
+
+  // Rule-based fallbacks
+  OPEN_PALM:  'HELLO',
+  FIST:       'STOP',
+  THUMBS_UP:  'YES',
+  PEACE:      'PEACE',
+  POINT:      'YOU',
+  ILOVEYOU:   'I_LOVE_YOU',
+  OK:         'GOOD',
+  ROCK:       'ROCK',
+  CALL:       'CALL',
+  L:          'L',
+  B:          'B',
+  C:          'C',
+  W:          'W',
+  I:          'I',
+  F:          'F',
+  MIDDLE:     'RUDE',
+};
+
+/** Make a label safe to display + speak. Underscores become spaces. */
+export function toWord(label) {
+  const mapped = WORD_MAP[label];
+  if (!mapped) return null;
+  return mapped.replace(/_/g, ' ');
+}
+
+/**
+ * Combine GestureRecognizer's output with our rule classifier and pick the
+ * best label per hand. `hands` is an array of:
+ *   { landmarks, handedness, builtinGesture?, builtinScore? }
  */
 export function classifyFrame(hands, minConfidence = 0.55) {
   if (!hands || hands.length === 0) {
     return { sign: 'NO_HAND', confidence: 0, handsDetected: 0 };
   }
   let best = { label: 'UNKNOWN', confidence: 0 };
-  for (const { landmarks, handedness } of hands) {
-    const r = classifyHand(landmarks, handedness);
-    if (r.confidence > best.confidence) best = r;
+  for (const h of hands) {
+    let label = h.builtinGesture && h.builtinGesture !== 'None' ? h.builtinGesture : null;
+    let conf = h.builtinScore ?? 0;
+
+    // Use the rule classifier if MediaPipe is unsure.
+    if (!label || conf < 0.55) {
+      const r = classifyHand(h.landmarks, h.handedness);
+      label = r.label;
+      conf = r.confidence;
+    }
+
+    if (conf > best.confidence) best = { label, confidence: conf };
   }
   return {
     sign: best.confidence >= minConfidence ? best.label : 'UNKNOWN',
