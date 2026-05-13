@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
 html, body, #root {
@@ -11,34 +11,150 @@ html, body, #root {
 }
 
 body {
-  @apply bg-gradient-to-br from-slate-50 via-white to-brand-50 text-slate-900 font-sans;
+  @apply text-slate-900 font-sans antialiased;
+  background-color: #f8fafc;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* -------- Animated aurora background (CSS-only, GPU-accelerated) -------- */
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: -25vmax;
+  z-index: -2;
+  pointer-events: none;
+  filter: blur(70px);
+  opacity: 0.45;
+  will-change: transform;
+}
+body::before {
+  background:
+    radial-gradient(closest-side, #4f90ff 0%, transparent 70%) 20% 30% / 60vmax 60vmax no-repeat,
+    radial-gradient(closest-side, #2563eb 0%, transparent 70%) 80% 20% / 50vmax 50vmax no-repeat;
+  animation: aurora 22s ease-in-out infinite alternate;
+}
+body::after {
+  background:
+    radial-gradient(closest-side, #22d3ee 0%, transparent 70%) 15% 85% / 55vmax 55vmax no-repeat,
+    radial-gradient(closest-side, #a78bfa 0%, transparent 70%) 90% 80% / 45vmax 45vmax no-repeat;
+  animation: aurora 30s ease-in-out infinite alternate-reverse;
+  opacity: 0.35;
+}
+@keyframes aurora {
+  0%   { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+  50%  { transform: translate3d(-3%, 2%, 0) rotate(8deg) scale(1.08); }
+  100% { transform: translate3d(2%, -3%, 0) rotate(-6deg) scale(1.04); }
+}
+
+/* Subtle grain overlay for that "expensive design" feel */
+body::after {
+  /* (overridden above — kept block here intentionally empty) */
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  body::before, body::after { animation: none; }
 }
 
 @layer components {
+  /* -------- Buttons -------- */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 font-medium
-           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 font-semibold
+           transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed
+           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500;
   }
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700 shadow-card;
+    @apply btn text-white;
+    background-image: linear-gradient(135deg, #4f90ff, #1d4ed8);
+    box-shadow: 0 6px 16px -8px rgba(37, 99, 235, 0.6), inset 0 1px 0 rgba(255,255,255,0.2);
+  }
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 24px -8px rgba(37, 99, 235, 0.7), inset 0 1px 0 rgba(255,255,255,0.25);
   }
   .btn-secondary {
-    @apply btn bg-white text-slate-700 border border-slate-200 hover:bg-slate-50;
+    @apply btn bg-white/70 text-slate-700 border border-slate-200/80;
+    backdrop-filter: blur(10px);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    @apply bg-white;
+    transform: translateY(-1px);
   }
   .btn-danger {
-    @apply btn bg-red-600 text-white hover:bg-red-700;
+    @apply btn text-white;
+    background-image: linear-gradient(135deg, #f87171, #b91c1c);
+    box-shadow: 0 6px 16px -8px rgba(220, 38, 38, 0.6);
   }
+  .btn-danger:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+
+  /* -------- Cards (glass morphism) -------- */
   .card {
-    @apply bg-white/80 backdrop-blur rounded-2xl shadow-card border border-slate-100 p-6;
+    @apply rounded-2xl p-6 transition-shadow duration-300;
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    box-shadow:
+      0 10px 30px -12px rgba(15, 23, 42, 0.15),
+      0 2px 4px -1px rgba(15, 23, 42, 0.04),
+      inset 0 1px 0 rgba(255, 255, 255, 0.7);
   }
+  .card:hover {
+    box-shadow:
+      0 18px 40px -14px rgba(15, 23, 42, 0.20),
+      0 4px 8px -2px rgba(15, 23, 42, 0.06),
+      inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  }
+
+  /* -------- Form controls -------- */
   .input {
-    @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm
-           focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent;
+    @apply w-full rounded-xl border border-slate-200 bg-white/80 px-3.5 py-2.5 text-sm
+           transition-all duration-150
+           focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500;
+    backdrop-filter: blur(6px);
   }
   .label {
-    @apply block text-sm font-medium text-slate-700 mb-1;
+    @apply block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider;
   }
+
+  /* -------- Badges & pills -------- */
   .badge {
-    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold;
+    backdrop-filter: blur(6px);
   }
+
+  /* -------- Gradient text accent -------- */
+  .text-gradient {
+    background-image: linear-gradient(135deg, #4f90ff 0%, #1d4ed8 50%, #1e3a8a 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+/* -------- Numeric typography (tabular figures for confidence %, counts) -------- */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* -------- Scrollbar polish -------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.35);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.55); background-clip: padding-box; }
+
+/* -------- Selection -------- */
+::selection {
+  background: rgba(37, 99, 235, 0.25);
+  color: #0f172a;
 }

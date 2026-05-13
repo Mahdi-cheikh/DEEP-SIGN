@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4f90ff"/>
+      <stop offset="55%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#1e3a8a"/>
+    </linearGradient>
+    <linearGradient id="hand" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#e0ecff" stop-opacity="0.95"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="32" height="32" rx="7" fill="url(#g)"/>
+  <!-- Subtle inner glow -->
+  <rect x="1" y="1" width="30" height="30" rx="6" fill="none" stroke="white" stroke-opacity="0.18"/>
+  <!-- Stylized hand: thumb + 3 fingers + extended index = "L" / point gesture, evokes sign-language -->
+  <g fill="url(#hand)" stroke="white" stroke-width="0.4" stroke-linejoin="round">
+    <!-- palm -->
+    <path d="M9.5 17.2c0-1.6 0.8-2.4 2.2-2.4h7.6c1.3 0 2.2 0.9 2.2 2.3v4.8c0 2.9-2.4 5.3-5.3 5.3h-1.4c-2.9 0-5.3-2.4-5.3-5.3z"/>
+    <!-- index finger (extended) -->
+    <rect x="10.2" y="7.5" width="2.2" height="9" rx="1.1"/>
+    <!-- middle finger -->
+    <rect x="13.2" y="9.5" width="2.2" height="7" rx="1.1"/>
+    <!-- ring finger -->
+    <rect x="16.2" y="10" width="2.2" height="6.5" rx="1.1"/>
+    <!-- pinky -->
+    <rect x="19" y="11" width="2" height="5.5" rx="1"/>
+    <!-- thumb -->
+    <path d="M9.4 16.6c-1.4 0.4-2.3 1.6-2.3 3 0 1.5 1.1 2.5 2.5 2.5l1.8-0.2v-5.4z"/>
+  </g>
+</svg>
