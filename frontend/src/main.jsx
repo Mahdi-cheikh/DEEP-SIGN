@@ -5,8 +5,6 @@ import App from './App.jsx';
 import { AuthProvider } from './context/AuthContext.jsx';
 import './index.css';
 
-// `import.meta.env.BASE_URL` is '/' in dev and '/DEEP-SIGN/' in prod,
-// which keeps routing correct on both local dev and GitHub Pages.
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter basename={import.meta.env.BASE_URL}>
@@ -16,3 +14,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </BrowserRouter>
   </React.StrictMode>
 );
+
+// Register the service worker for PWA install + offline support.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    const swUrl = `${import.meta.env.BASE_URL}sw.js`;
+    navigator.serviceWorker.register(swUrl, { scope: import.meta.env.BASE_URL }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn('SW registration failed', err);
+    });
+  });
+}

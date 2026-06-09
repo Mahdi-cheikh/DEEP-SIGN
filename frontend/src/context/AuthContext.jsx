@@ -7,7 +7,6 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Hydrate the session on mount and subscribe to future auth changes.
   useEffect(() => {
     let mounted = true;
 
@@ -43,13 +42,25 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
+  // OAuth — Supabase redirects to Google's consent page, then back to our app.
+  // `redirectTo` is critical for GitHub Pages where the app lives at /DEEP-SIGN/.
+  const loginWithGoogle = useCallback(async () => {
+    const base = `${window.location.origin}${import.meta.env.BASE_URL}`;
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: base },
+    });
+    if (error) throw error;
+    return data;
+  }, []);
+
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
     setUser(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, login, signup, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, signup, loginWithGoogle, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );
