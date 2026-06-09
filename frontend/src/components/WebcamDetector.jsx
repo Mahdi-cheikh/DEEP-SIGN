@@ -1,9 +1,8 @@
 import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useAuth } from '../context/AuthContext.jsx';
 import { classifyFrame, toWord } from '../lib/classifier.js';
-import { supabase } from '../lib/supabase.js';
+import { history } from '../lib/history.js';
 
 const WASM_BASE =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
@@ -30,12 +29,9 @@ async function getRecognizer() {
   return recognizerSingleton;
 }
 
-async function logDetection(userId, sign, confidence) {
-  if (!userId || ['UNKNOWN', 'NO_HAND', 'NO_INPUT', '—'].includes(sign)) return;
-  const { error } = await supabase
-    .from('detections')
-    .insert({ user_id: userId, sign, confidence: Number(confidence.toFixed(3)) });
-  if (error) console.warn('Failed to log detection', error);
+function logDetection(sign, confidence) {
+  if (['UNKNOWN', 'NO_HAND', 'NO_INPUT', '—'].includes(sign)) return;
+  history.add(sign, confidence);
 }
 
 function speak(text) {
@@ -48,7 +44,6 @@ function speak(text) {
 }
 
 export default function WebcamDetector() {
-  const { user } = useAuth();
   const videoRef = useRef(null);
   const overlayRef = useRef(null);
   const streamRef = useRef(null);
@@ -143,13 +138,13 @@ export default function WebcamDetector() {
       if (armedRef.current && streakRef.current === APPEND_THRESHOLD && word) {
         armedRef.current = false;
         setSentence((prev) => [...prev, word]);
-        logDetection(user?.id, classified.sign, classified.confidence);
+        logDetection(classified.sign, classified.confidence);
         if (autoSpeak) speak(word);
       }
     }
 
     rafRef.current = requestAnimationFrame(loop);
-  }, [user?.id, autoSpeak]);
+  }, [autoSpeak]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -324,25 +319,13 @@ export default function WebcamDetector() {
             )}
           </div>
           <div className="mt-3 flex gap-2 flex-wrap">
-            <button
-              onClick={speakSentence}
-              disabled={!sentence.length}
-              className="btn-primary !px-3 !py-1.5 text-sm"
-            >
+            <button onClick={speakSentence} disabled={!sentence.length} className="btn-primary !px-3 !py-1.5 text-sm">
               Speak
             </button>
-            <button
-              onClick={deleteLast}
-              disabled={!sentence.length}
-              className="btn-secondary !px-3 !py-1.5 text-sm"
-            >
+            <button onClick={deleteLast} disabled={!sentence.length} className="btn-secondary !px-3 !py-1.5 text-sm">
               Delete last
             </button>
-            <button
-              onClick={clearSentence}
-              disabled={!sentence.length}
-              className="btn-secondary !px-3 !py-1.5 text-sm text-red-600"
-            >
+            <button onClick={clearSentence} disabled={!sentence.length} className="btn-secondary !px-3 !py-1.5 text-sm text-red-600">
               Clear
             </button>
           </div>

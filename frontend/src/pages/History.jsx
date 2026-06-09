@@ -1,80 +1,52 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useAuth } from '../context/AuthContext.jsx';
-import { supabase } from '../lib/supabase.js';
+import { history } from '../lib/history.js';
 
 function formatDate(iso) {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch (_) {
-    return iso;
-  }
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
 
 function computeStats(rows) {
   if (!rows.length) return { total: 0, unique_signs: 0, top_sign: null, last_seen_at: null };
   const counts = new Map();
   for (const r of rows) counts.set(r.sign, (counts.get(r.sign) || 0) + 1);
-  let top = null;
-  let topCount = 0;
+  let top = null, topCount = 0;
   for (const [sign, c] of counts) {
-    if (c > topCount) {
-      topCount = c;
-      top = sign;
-    }
+    if (c > topCount) { topCount = c; top = sign; }
   }
   return {
     total: rows.length,
     unique_signs: counts.size,
     top_sign: top,
-    last_seen_at: rows[0].created_at,
+    last_seen_at: rows[0].createdAt,
   };
 }
 
 export default function History() {
-  const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
-  const refresh = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    setError(null);
-    const { data, error: err } = await supabase
-      .from('detections')
-      .select('id, sign, confidence, created_at')
-      .order('created_at', { ascending: false })
-      .limit(500);
-    if (err) {
-      setError(err.message);
-    } else {
-      setRows(data || []);
-      setStats(computeStats(data || []));
-    }
-    setLoading(false);
-  }, [user]);
+  const refresh = useCallback(() => {
+    const data = history.load();
+    setRows(data);
+    setStats(computeStats(data));
+  }, []);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
 
-  const onClear = async () => {
+  const onClear = () => {
     if (!confirm('Clear all detection history? This cannot be undone.')) return;
-    const { error: err } = await supabase.from('detections').delete().gte('id', 0);
-    if (err) {
-      alert('Failed to clear history: ' + err.message);
-      return;
-    }
-    await refresh();
+    history.clear();
+    refresh();
   };
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
-      <div className="flex items-end justify-between mb-6">
+      <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Detection history</h1>
-          <p className="text-sm text-slate-500">Every confident sign you've signed.</p>
+          <p className="text-sm text-slate-500">
+            Stored in this browser only &mdash; nothing leaves your device.
+          </p>
         </div>
         <div className="flex gap-2">
           <button onClick={refresh} className="btn-secondary">Refresh</button>
@@ -95,7 +67,7 @@ export default function History() {
 
       <div className="card !p-0 overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-left text-slate-600 uppercase text-xs">
+          <thead className="bg-slate-50/80 text-left text-slate-600 uppercase text-xs">
             <tr>
               <th className="px-4 py-3">Sign</th>
               <th className="px-4 py-3">Confidence</th>
@@ -103,17 +75,7 @@ export default function History() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {loading && (
-              <tr>
-                <td colSpan={3} className="px-4 py-8 text-center text-slate-500">Loading…</td>
-              </tr>
-            )}
-            {!loading && error && (
-              <tr>
-                <td colSpan={3} className="px-4 py-8 text-center text-red-600">{error}</td>
-              </tr>
-            )}
-            {!loading && !error && rows.length === 0 && (
+            {rows.length === 0 && (
               <tr>
                 <td colSpan={3} className="px-4 py-12 text-center text-slate-500">
                   No detections yet. Open the detector and hold a sign for a second!
@@ -121,7 +83,7 @@ export default function History() {
               </tr>
             )}
             {rows.map((r) => (
-              <tr key={r.id} className="hover:bg-slate-50">
+              <tr key={r.id} className="hover:bg-slate-50/60">
                 <td className="px-4 py-3 font-semibold text-slate-900">{r.sign}</td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
@@ -131,12 +93,12 @@ export default function History() {
                         style={{ width: `${Math.round(Number(r.confidence) * 100)}%` }}
                       />
                     </div>
-                    <span className="text-xs text-slate-500">
+                    <span className="text-xs text-slate-500 tabular">
                       {Math.round(Number(r.confidence) * 100)}%
                     </span>
                   </div>
                 </td>
-                <td className="px-4 py-3 text-slate-600">{formatDate(r.created_at)}</td>
+                <td className="px-4 py-3 text-slate-600">{formatDate(r.createdAt)}</td>
               </tr>
             ))}
           </tbody>

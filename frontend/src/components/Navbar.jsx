@@ -1,5 +1,4 @@
 import { Link, NavLink } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext.jsx';
 
 const navItem = 'px-3 py-1.5 rounded-lg text-sm font-medium transition-all';
 const navActive = 'bg-brand-50 text-brand-700 shadow-sm';
@@ -27,8 +26,6 @@ function Logo() {
 }
 
 export default function Navbar() {
-  const { user, logout } = useAuth();
-
   return (
     <header className="sticky top-0 z-30 backdrop-blur-lg bg-white/60 border-b border-slate-200/60">
       <div className="max-w-6xl mx-auto flex items-center justify-between px-4 h-16">
@@ -45,40 +42,12 @@ export default function Navbar() {
         </Link>
 
         <nav className="flex items-center gap-1">
-          {user ? (
-            <>
-              <NavLink
-                to="/detect"
-                className={({ isActive }) => `${navItem} ${isActive ? navActive : navIdle}`}
-              >
-                Detect
-              </NavLink>
-              <NavLink
-                to="/history"
-                className={({ isActive }) => `${navItem} ${isActive ? navActive : navIdle}`}
-              >
-                History
-              </NavLink>
-              <span className="hidden sm:inline text-xs text-slate-500 px-2 max-w-[160px] truncate">
-                {user.user_metadata?.full_name || user.email}
-              </span>
-              <button onClick={logout} className="btn-secondary !px-3 !py-1.5 text-sm">
-                Sign out
-              </button>
-            </>
-          ) : (
-            <>
-              <NavLink
-                to="/login"
-                className={({ isActive }) => `${navItem} ${isActive ? navActive : navIdle}`}
-              >
-                Sign in
-              </NavLink>
-              <Link to="/signup" className="btn-primary !px-3 !py-1.5 text-sm">
-                Get started
-              </Link>
-            </>
-          )}
+          <NavLink to="/detect" className={({ isActive }) => `${navItem} ${isActive ? navActive : navIdle}`}>
+            Detect
+          </NavLink>
+          <NavLink to="/history" className={({ isActive }) => `${navItem} ${isActive ? navActive : navIdle}`}>
+            History
+          </NavLink>
         </nav>
       </div>
     </header>
